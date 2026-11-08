@@ -1,0 +1,2 @@
+# Test vectors must stay byte for byte as written.
+core/pack/testdata/** -text

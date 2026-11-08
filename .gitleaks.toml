@@ -1,0 +1,10 @@
+# The test keys in core/pack/testdata/v1 are public on purpose: the README,
+# SECURITY.md, and docs/format.md publish them so that anyone can restore the
+# test vectors. Never use them to protect real data.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public test keys for the pack format test vectors"
+paths = ['''^core/pack/testdata/v1/key[12]\.txt$''']

@@ -1,0 +1,38 @@
+name: Bug report
+description: Report something in Rautjoxa that doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        To report a vulnerability, don't use this form. Follow the [security policy](https://github.com/bennyjo/rautjoxa/blob/main/SECURITY.md) instead.
+        Never paste a real key or a real pack into an issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The commands or code that show the problem. Use the public test keys and vectors in core/pack/testdata/v1 where you can.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+      description: The commit you tested, from `git rev-parse HEAD`.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your operating system, and the output of `go version`. For a restore problem, also add `age --version` and `tar --version`.
+    validations:
+      required: false

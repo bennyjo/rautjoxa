@@ -1,0 +1,98 @@
+name: core
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go vet and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Run gofmt on these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test -race -p 2 ./...
+
+  stock-restore:
+    name: Restore with stock age and tar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: Install age v1.3.2 release binaries
+        env:
+          AGE_VERSION: v1.3.2
+          AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/age.tar.gz" \
+            "https://github.com/FiloSottile/age/releases/download/$AGE_VERSION/age-$AGE_VERSION-linux-amd64.tar.gz"
+          echo "$AGE_SHA256  $RUNNER_TEMP/age.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/age.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/age" >> "$GITHUB_PATH"
+      - name: Install bsdtar
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libarchive-tools
+      - run: |
+          age --version && age-inspect --version
+          tar --version | head -n 1 && bsdtar --version && openssl version
+      - name: Restore the checked-in test vectors with GNU tar and bsdtar
+        run: |
+          core/scripts/check-stock-restore.sh core/pack/testdata/v1
+          TAR=bsdtar core/scripts/check-stock-restore.sh core/pack/testdata/v1
+      - name: Restore fresh packs from the current writer with GNU tar and bsdtar
+        working-directory: core
+        run: |
+          go test -count=1 ./pack -run TestWriteVectors -vectors-out="$RUNNER_TEMP/fresh"
+          scripts/check-stock-restore.sh "$RUNNER_TEMP/fresh"
+          TAR=bsdtar scripts/check-stock-restore.sh "$RUNNER_TEMP/fresh"
+      - name: Restore an item of 8 GiB, which needs a pax size record, with GNU tar and bsdtar
+        working-directory: core
+        run: |
+          set -euo pipefail
+          df -h "$RUNNER_TEMP"
+          go test -c -o "$RUNNER_TEMP/pack.test" ./pack
+          out="$RUNNER_TEMP/big/out"
+          mkdir -p "$out"
+          for tool in tar bsdtar; do
+            dir="$RUNNER_TEMP/big/$tool"
+            mkdir -p "$dir"
+            mkfifo "$dir/pack.age"
+            (cd pack && "$RUNNER_TEMP/pack.test" -test.run '^TestWriteBigPack$' -test.timeout 20m -big-out="$dir/pack.age") &
+            writer=$!
+            # The second restore replaces the files of the first, so only one
+            # copy of the 8 GiB item is ever on disk.
+            age -d -i pack/testdata/v1/key1.txt "$dir/pack.age" | "$tool" -x -f - -C "$out"
+            wait "$writer"
+            (cd "$out" && jq -r '.members[] | "\(.sha256)  \(.path)"' manifest.json | sha256sum -c -)
+            test "$(jq -r .signer "$out/manifest.json")" = "$(cat "$dir/signer.pub")"
+            { printf 302a300506032b6570032100; cat "$dir/signer.pub"; } | tr -d '\n' | xxd -r -p >"$dir/signer.der"
+            openssl pkeyutl -verify -pubin -keyform DER -inkey "$dir/signer.der" -rawin -in "$out/manifest.json" -sigfile "$out/manifest.sig"
+            echo "ok: $tool restored the 8 GiB item and verified it"
+          done
